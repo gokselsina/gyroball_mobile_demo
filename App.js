@@ -9,8 +9,17 @@ const { width, height } = Dimensions.get('window');
 //  "stale" kalma sorununu ortadan kaldırmak için props-driven render zorluyoruz.
 const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players }) => {
   return (
-    <View style={[styles.cameraView, { transform: [{ translateX: offsetX }, { translateY: offsetY }] }]}>
-      {/* Zemin */}
+    <View
+      style={[
+        styles.cameraView,
+        {
+          transform: [
+            { translateX: offsetX },
+            { translateY: offsetY }
+          ]
+        }
+      ]}
+    >
       {gameData && (
         <View style={{
           position: 'absolute',
@@ -19,7 +28,8 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players }) =
           borderWidth: 5,
           borderColor: '#475569',
           backgroundColor: '#1E293B',
-          left: 0, top: 0
+          left: 0,
+          top: 0
         }}>
           {gameData.king_zone && (
             <View style={{
@@ -37,35 +47,55 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players }) =
         </View>
       )}
 
-      {/* Duvarlar */}
       {gameData && gameData.walls.map(w => (
         <View key={w.id} style={{
           position: 'absolute',
-          left: w.x, top: w.y, width: w.width, height: w.height,
+          left: w.x,
+          top: w.y,
+          width: w.width,
+          height: w.height,
           backgroundColor: '#38BDF8',
           borderRadius: 5,
         }} />
       ))}
 
-      {/* Toplar */}
       {roomData && roomData.players.map(p => {
         const state = players[p.id];
         if (!state) return null;
+
         const r = gameData?.ball_radius || 10;
+
         return (
           <View key={p.id} style={{
             position: 'absolute',
             left: state.x - r,
             top: state.y - r,
-            width: r * 2, height: r * 2,
+            width: r * 2,
+            height: r * 2,
             borderRadius: r,
             backgroundColor: p.color,
-            borderWidth: 2, borderColor: '#FFF',
-            alignItems: 'center', justifyContent: 'center',
+            borderWidth: 2,
+            borderColor: '#FFF',
+            alignItems: 'center',
+            justifyContent: 'center',
             overflow: 'visible'
           }}>
-            <View style={{ position: 'absolute', top: -25, alignItems: 'center', width: 100, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 5, paddingVertical: 2 }}>
-              <Text style={{ color: '#FFF', fontSize: 13, fontWeight: 'bold' }}>{p.nick}</Text>
+            <View style={{
+              position: 'absolute',
+              top: -25,
+              alignItems: 'center',
+              width: 100,
+              backgroundColor: 'rgba(0,0,0,0.4)',
+              borderRadius: 5,
+              paddingVertical: 2
+            }}>
+              <Text style={{
+                color: '#FFF',
+                fontSize: 13,
+                fontWeight: 'bold'
+              }}>
+                {p.nick}
+              </Text>
             </View>
           </View>
         );
@@ -408,9 +438,11 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     top: 0,
-    width: 0,
-    height: 0,
-    overflow: 'visible'
+    width: width,   // 🔥 FIX
+    height: height, // 🔥 FIX
+    overflow: 'hidden',
+    renderToHardwareTextureAndroid: true,
+    shouldRasterizeIOS: true,
   },
   title: {
     color: '#F8FAFC',
