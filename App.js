@@ -8,11 +8,16 @@ const { width, height } = Dimensions.get('window');
 // Haritayı ayrı bir bileşen olarak çıkarıyoruz — iOS'de inline style güncellemelerinin
 //  "stale" kalma sorununu ortadan kaldırmak için props-driven render zorluyoruz.
 const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players }) => {
+  const mapW = gameData ? gameData.map_width : width;
+  const mapH = gameData ? gameData.map_height : height;
+
   return (
     <View
       style={[
         styles.cameraView,
         {
+          width: mapW,
+          height: mapH,
           transform: [
             { translateX: offsetX },
             { translateY: offsetY }
@@ -432,15 +437,13 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F172A'
+    backgroundColor: '#0F172A',
+    overflow: 'hidden'
   },
   cameraView: {
     position: 'absolute',
     left: 0,
     top: 0,
-    width: width,   // 🔥 FIX
-    height: height, // 🔥 FIX
-    overflow: 'hidden',
     renderToHardwareTextureAndroid: true,
     shouldRasterizeIOS: true,
   },
