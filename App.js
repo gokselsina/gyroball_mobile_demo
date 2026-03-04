@@ -5,9 +5,141 @@ import Constants from 'expo-constants';
 
 const { width, height } = Dimensions.get('window');
 
+const EVT = {
+  SYNC: 1, TILT: 2,
+  MY_ID: 10, ERROR_MSG: 11, JOINED: 12, ROOM_UPDATE: 13,
+  LEFT_ROOM: 14, GAME_STARTED: 15, GAME_OVER: 16, ROOM_LIST: 17,
+  CREATE_ROOM: 20, JOIN_ROOM: 21, READY: 22, START_GAME: 23,
+  GET_ROOMS: 24, LEAVE_ROOM: 25,
+};
+const EVT_NAME_TO_ID = {
+  tilt: 2, create_room: 20, join_room: 21, ready: 22,
+  start_game: 23, get_rooms: 24, leave_room: 25,
+};
+const EVT_ID_TO_NAME = {
+  1: 'sync', 10: 'my_id', 11: 'error_msg', 12: 'joined',
+  13: 'room_update', 14: 'left_room', 15: 'game_started',
+  16: 'game_over', 17: 'room_list',
+};
+
+const _tiltBuf = new ArrayBuffer(9);
+const _tiltView = new DataView(_tiltBuf);
+_tiltView.setUint8(0, EVT.TILT);
+
+function packTilt(x, y) {
+  _tiltView.setFloat32(1, x, true);
+  _tiltView.setFloat32(5, y, true);
+  return _tiltBuf;
+}
+
+function packJson(evtId, data) {
+  const json = data !== undefined ? JSON.stringify(data) : '';
+  const bytes = new TextEncoder().encode(json);
+  const buf = new Uint8Array(1 + bytes.length);
+  buf[0] = evtId;
+  buf.set(bytes, 1);
+  return buf.buffer;
+}
+
+function unpackMessage(arrayBuffer) {
+  const view = new DataView(arrayBuffer);
+  const evtId = view.getUint8(0);
+
+  if (evtId === EVT.SYNC) {
+    const timeLeft = view.getUint8(1);
+    const count = view.getUint8(2);
+    const players = {};
+    let off = 3;
+    for (let i = 0; i < count; i++) {
+      const id = view.getUint32(off, true);
+      players[id] = {
+        x: view.getFloat32(off + 4, true),
+        y: view.getFloat32(off + 8, true),
+        score: view.getFloat32(off + 12, true),
+      };
+      off += 16;
+    }
+    return { event: 'sync', data: { players, timeLeft } };
+  }
+
+  const event = EVT_ID_TO_NAME[evtId];
+  const jsonBytes = new Uint8Array(arrayBuffer, 1);
+  const data = jsonBytes.length > 0
+    ? JSON.parse(new TextDecoder().decode(jsonBytes))
+    : undefined;
+  return { event, data };
+}
+
+const MINIMAP_SIZE = 90;
+
+const MiniMap = React.memo(({ gameData, roomData, players, myId }) => {
+  if (!gameData) return null;
+
+  const scale = MINIMAP_SIZE / Math.max(gameData.map_width, gameData.map_height);
+
+  return (
+    <View style={styles.minimap}>
+      <View style={{
+        width: gameData.map_width * scale,
+        height: gameData.map_height * scale,
+        backgroundColor: '#1E293B',
+        borderWidth: 1,
+        borderColor: '#475569',
+        overflow: 'hidden',
+      }}>
+        {gameData.king_zone && (
+          <View style={{
+            position: 'absolute',
+            left: (gameData.king_zone.x - gameData.king_zone.radius) * scale,
+            top: (gameData.king_zone.y - gameData.king_zone.radius) * scale,
+            width: gameData.king_zone.radius * 2 * scale,
+            height: gameData.king_zone.radius * 2 * scale,
+            borderRadius: gameData.king_zone.radius * scale,
+            backgroundColor: 'rgba(245, 158, 11, 0.25)',
+            borderWidth: 1,
+            borderColor: '#F59E0B',
+          }} />
+        )}
+
+        {gameData.walls.map(w => (
+          <View key={w.id} style={{
+            position: 'absolute',
+            left: w.x * scale,
+            top: w.y * scale,
+            width: Math.max(1, w.width * scale),
+            height: Math.max(1, w.height * scale),
+            backgroundColor: 'rgba(56, 189, 248, 0.6)',
+          }} />
+        ))}
+
+        {roomData && roomData.players.map(p => {
+          const state = players[p.id];
+          if (!state) return null;
+          const isMe = p.id === myId;
+          const dotSize = isMe ? 6 : 4;
+          return (
+            <View key={p.id} style={{
+              position: 'absolute',
+              left: state.x * scale - dotSize / 2,
+              top: state.y * scale - dotSize / 2,
+              width: dotSize,
+              height: dotSize,
+              borderRadius: dotSize / 2,
+              backgroundColor: p.color,
+              borderWidth: isMe ? 1 : 0,
+              borderColor: '#FFF',
+              zIndex: isMe ? 10 : 1,
+            }} />
+          );
+        })}
+      </View>
+    </View>
+  );
+});
+
 // Haritayı ayrı bir bileşen olarak çıkarıyoruz — iOS'de inline style güncellemelerinin
 //  "stale" kalma sorununu ortadan kaldırmak için props-driven render zorluyoruz.
-const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players }) => {
+const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myId }) => {
   const mapW = gameData ? gameData.map_width : width;
   const mapH = gameData ? gameData.map_height : height;
 
@@ -69,6 +201,7 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players }) =
         if (!state) return null;
 
         const r = gameData?.ball_radius || 10;
+        const isMe = p.id === myId;
 
         return (
           <View key={p.id} style={{
@@ -79,27 +212,40 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players }) =
             height: r * 2,
             borderRadius: r,
             backgroundColor: p.color,
-            borderWidth: 2,
-            borderColor: '#FFF',
+            borderWidth: isMe ? 3 : 2,
+            borderColor: isMe ? '#FFF' : 'rgba(255,255,255,0.5)',
             alignItems: 'center',
             justifyContent: 'center',
-            overflow: 'visible'
+            overflow: 'visible',
+            zIndex: isMe ? 10 : 1,
           }}>
+            {isMe && (
+              <View style={{
+                position: 'absolute',
+                width: r * 2 + 14,
+                height: r * 2 + 14,
+                borderRadius: r + 7,
+                borderWidth: 2,
+                borderColor: p.color,
+                opacity: 0.6,
+              }} />
+            )}
             <View style={{
               position: 'absolute',
               top: -25,
               alignItems: 'center',
               width: 100,
-              backgroundColor: 'rgba(0,0,0,0.4)',
+              backgroundColor: isMe ? 'rgba(56,189,248,0.7)' : 'rgba(0,0,0,0.4)',
               borderRadius: 5,
-              paddingVertical: 2
+              paddingVertical: 2,
+              paddingHorizontal: 6,
             }}>
               <Text style={{
                 color: '#FFF',
-                fontSize: 13,
-                fontWeight: 'bold'
+                fontSize: isMe ? 14 : 12,
+                fontWeight: 'bold',
               }}>
-                {p.nick}
+                {isMe ? '▼ ' : ''}{p.nick}
               </Text>
             </View>
           </View>
@@ -138,16 +284,15 @@ export default function App() {
   const tiltRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    // Connect websocket
     const s = new WebSocket(SOCKET_URL);
+    s.binaryType = 'arraybuffer';
     setSocket(s);
 
     s.onopen = () => console.log('Connected to server via WebSocket');
 
     s.onmessage = (msgEvent) => {
       try {
-        const parsed = JSON.parse(msgEvent.data);
-        const { event, data } = parsed;
+        const { event, data } = unpackMessage(msgEvent.data);
 
         if (event === 'my_id') setMyId(data);
         else if (event === 'error_msg') alert(data);
@@ -190,7 +335,11 @@ export default function App() {
 
   const emit = (event, data) => {
     if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ event, data }));
+      if (event === 'tilt') {
+        socket.send(packTilt(data.x, data.y));
+      } else {
+        socket.send(packJson(EVT_NAME_TO_ID[event], data));
+      }
     }
   };
 
@@ -395,6 +544,7 @@ export default function App() {
         gameData={gameData}
         roomData={roomData}
         players={playersState}
+        myId={myId}
       />
 
       {/* GAME UI: Exit Game (Top Left) */}
@@ -415,7 +565,6 @@ export default function App() {
       <View style={styles.scoreHUD}>
         {roomData && roomData.players.map(p => {
           const state = playersState[p.id] || { score: 0 };
-          // Assuming ~6000 points is around max based on 60 sec inside. We show it as width filling up.
           const widthPercent = Math.min(100, Math.max(0, (state.score / 6000) * 100));
           return (
             <View key={p.id} style={styles.scoreHUDItem}>
@@ -430,6 +579,14 @@ export default function App() {
           )
         })}
       </View>
+
+      {/* GAME UI: MiniMap (Bottom Left) */}
+      <MiniMap
+        gameData={gameData}
+        roomData={roomData}
+        players={playersState}
+        myId={myId}
+      />
     </View>
   );
 }
@@ -603,5 +760,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#BE123C',
     zIndex: 10
-  }
+  },
+  minimap: {
+    position: 'absolute',
+    bottom: 30,
+    left: 15,
+    padding: 4,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+    zIndex: 10,
+  },
 });
