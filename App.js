@@ -9,6 +9,7 @@ const EVT = {
   SYNC: 1, TILT: 2,
   MY_ID: 10, ERROR_MSG: 11, JOINED: 12, ROOM_UPDATE: 13,
   LEFT_ROOM: 14, GAME_STARTED: 15, GAME_OVER: 16, ROOM_LIST: 17,
+  ZONE_UPDATE: 18,
   CREATE_ROOM: 20, JOIN_ROOM: 21, READY: 22, START_GAME: 23,
   GET_ROOMS: 24, LEAVE_ROOM: 25,
 };
@@ -19,7 +20,7 @@ const EVT_NAME_TO_ID = {
 const EVT_ID_TO_NAME = {
   1: 'sync', 10: 'my_id', 11: 'error_msg', 12: 'joined',
   13: 'room_update', 14: 'left_room', 15: 'game_started',
-  16: 'game_over', 17: 'room_list',
+  16: 'game_over', 17: 'room_list', 18: 'zone_update',
 };
 
 const _tiltBuf = new ArrayBuffer(9);
@@ -72,23 +73,28 @@ function unpackMessage(arrayBuffer) {
 
 const MINIMAP_SIZE = 160;
 
-const StaticMiniMap = React.memo(({ gameData, scale }) => {
+const StaticMiniMap = React.memo(({ gameData, scale, zoneStates }) => {
   if (!gameData) return null;
+  const kingZones = gameData.king_zones || (gameData.king_zone ? [gameData.king_zone] : []);
   return (
     <>
-      {gameData.king_zone && (
-        <View style={{
-          position: 'absolute',
-          left: (gameData.king_zone.x - gameData.king_zone.radius) * scale,
-          top: (gameData.king_zone.y - gameData.king_zone.radius) * scale,
-          width: gameData.king_zone.radius * 2 * scale,
-          height: gameData.king_zone.radius * 2 * scale,
-          borderRadius: gameData.king_zone.radius * scale,
-          backgroundColor: 'rgba(245, 158, 11, 0.25)',
-          borderWidth: 1,
-          borderColor: '#F59E0B',
-        }} />
-      )}
+      {kingZones.map((kz, idx) => {
+        const zs = zoneStates && zoneStates[idx];
+        const ownerColor = zs?.ownerColor || '#F59E0B';
+        return (
+          <View key={`kz-mini-${idx}`} style={{
+            position: 'absolute',
+            left: (kz.x - kz.radius) * scale,
+            top: (kz.y - kz.radius) * scale,
+            width: kz.radius * 2 * scale,
+            height: kz.radius * 2 * scale,
+            borderRadius: kz.radius * scale,
+            backgroundColor: zs?.ownerId ? (ownerColor + '40') : 'rgba(245, 158, 11, 0.25)',
+            borderWidth: 1,
+            borderColor: ownerColor,
+          }} />
+        );
+      })}
 
       {gameData.walls.map(w => (
         <View key={w.id} style={{
@@ -104,7 +110,7 @@ const StaticMiniMap = React.memo(({ gameData, scale }) => {
   );
 });
 
-const MiniMap = React.memo(({ gameData, roomData, players, myId }) => {
+const MiniMap = React.memo(({ gameData, roomData, players, myId, zoneStates }) => {
   if (!gameData) return null;
 
   const scale = MINIMAP_SIZE / Math.max(gameData.map_width, gameData.map_height);
@@ -119,7 +125,7 @@ const MiniMap = React.memo(({ gameData, roomData, players, myId }) => {
         borderColor: '#475569',
         overflow: 'hidden',
       }}>
-        <StaticMiniMap gameData={gameData} scale={scale} />
+        <StaticMiniMap gameData={gameData} scale={scale} zoneStates={zoneStates} />
 
         {roomData && roomData.players.map(p => {
           const state = players[p.id];
@@ -146,8 +152,9 @@ const MiniMap = React.memo(({ gameData, roomData, players, myId }) => {
   );
 });
 
-const StaticMap = React.memo(({ gameData }) => {
+const StaticMap = React.memo(({ gameData, zoneStates }) => {
   if (!gameData) return null;
+  const kingZones = gameData.king_zones || (gameData.king_zone ? [gameData.king_zone] : []);
   return (
     <>
       <View style={{
@@ -160,19 +167,48 @@ const StaticMap = React.memo(({ gameData }) => {
         left: 0,
         top: 0
       }}>
-        {gameData.king_zone && (
-          <View style={{
-            position: 'absolute',
-            left: gameData.king_zone.x - gameData.king_zone.radius,
-            top: gameData.king_zone.y - gameData.king_zone.radius,
-            width: gameData.king_zone.radius * 2,
-            height: gameData.king_zone.radius * 2,
-            borderRadius: gameData.king_zone.radius,
-            backgroundColor: 'rgba(245, 158, 11, 0.15)',
-            borderWidth: 2,
-            borderColor: '#F59E0B',
-          }} />
-        )}
+        {kingZones.map((kz, idx) => {
+          const zs = zoneStates && zoneStates[idx];
+          const ownerColor = zs?.ownerColor;
+          const borderColor = ownerColor || '#F59E0B';
+          const bgColor = ownerColor
+            ? (ownerColor + '26')
+            : 'rgba(245, 158, 11, 0.15)';
+          const zoneName = zs?.name || `Bölge ${idx + 1}`;
+          const ownerNick = zs?.ownerNick;
+
+          return (
+            <View key={`kz-${idx}`} style={{
+              position: 'absolute',
+              left: kz.x - kz.radius,
+              top: kz.y - kz.radius,
+              width: kz.radius * 2,
+              height: kz.radius * 2,
+              borderRadius: kz.radius,
+              backgroundColor: bgColor,
+              borderWidth: 2,
+              borderColor: borderColor,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              <Text style={{
+                color: borderColor,
+                fontSize: 10,
+                fontWeight: 'bold',
+                textAlign: 'center',
+              }}>{zoneName}</Text>
+              {ownerNick && (
+                <Text style={{
+                  color: ownerColor || '#F59E0B',
+                  fontSize: 8,
+                  fontWeight: '600',
+                  textAlign: 'center',
+                  marginTop: 1,
+                }}>👑 {ownerNick}</Text>
+              )}
+            </View>
+          );
+        })}
       </View>
 
       {gameData.walls.map(w => (
@@ -192,7 +228,7 @@ const StaticMap = React.memo(({ gameData }) => {
 
 // Haritayı ayrı bir bileşen olarak çıkarıyoruz — iOS'de inline style güncellemelerinin
 //  "stale" kalma sorununu ortadan kaldırmak için props-driven render zorluyoruz.
-const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myId }) => {
+const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myId, zoneStates }) => {
   const mapW = gameData ? gameData.map_width : width;
   const mapH = gameData ? gameData.map_height : height;
 
@@ -210,7 +246,7 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myI
         }
       ]}
     >
-      <StaticMap gameData={gameData} />
+      <StaticMap gameData={gameData} zoneStates={zoneStates} />
 
       {roomData && roomData.players.map(p => {
         const state = players[p.id];
@@ -285,6 +321,7 @@ export default function App() {
   const [screen, setScreen] = useState('HOME');
   const [nick, setNick] = useState('');
   const [roomCodeInput, setRoomCodeInput] = useState('');
+  const [gameMode, setGameMode] = useState('labyrinth');
 
   const [roomData, setRoomData] = useState(null);
   const [gameData, setGameData] = useState(null);
@@ -292,6 +329,7 @@ export default function App() {
   const [winMessage, setWinMessage] = useState('');
   const [damageIndicators, setDamageIndicators] = useState([]);
   const [availableRooms, setAvailableRooms] = useState([]);
+  const [zoneStates, setZoneStates] = useState(null);
 
   // Gyroscope Calibration & Sync Settings
   const [invertAxis, setInvertAxis] = useState(false);
@@ -327,6 +365,7 @@ export default function App() {
         }
         else if (event === 'game_started') {
           setGameData(data);
+          setZoneStates(null);
           setScreen('GAME');
           setWinMessage('');
         }
@@ -343,6 +382,9 @@ export default function App() {
         }
         else if (event === 'room_list') {
           setAvailableRooms(data);
+        }
+        else if (event === 'zone_update') {
+          setZoneStates(data);
         }
       } catch (e) { }
     };
@@ -410,7 +452,7 @@ export default function App() {
 
   const handleCreateRoom = () => {
     if (!nick) return alert("Nickname boş olamaz");
-    emit('create_room', { nick });
+    emit('create_room', { nick, gameMode });
   };
 
   const handleJoinRoom = () => {
@@ -426,6 +468,28 @@ export default function App() {
     return (
       <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
         <Text style={styles.title}>Gyro Maze Multi</Text>
+        {/* Game Mode Selector */}
+        <View style={{ flexDirection: 'row', width: '80%', marginBottom: 20, backgroundColor: '#1E293B', borderRadius: 12, padding: 4, borderWidth: 1, borderColor: '#334155' }}>
+          <TouchableOpacity
+            style={{
+              flex: 1, padding: 12, borderRadius: 10, alignItems: 'center',
+              backgroundColor: gameMode === 'labyrinth' ? '#38BDF8' : 'transparent',
+            }}
+            onPress={() => setGameMode('labyrinth')}
+          >
+            <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 14 }}>🏰 Labirent</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{
+              flex: 1, padding: 12, borderRadius: 10, alignItems: 'center',
+              backgroundColor: gameMode === 'arena' ? '#F43F5E' : 'transparent',
+            }}
+            onPress={() => setGameMode('arena')}
+          >
+            <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 14 }}>⚔️ Arena</Text>
+          </TouchableOpacity>
+        </View>
+
         <TextInput
           style={styles.input}
           placeholder="Nickname Girin"
@@ -514,6 +578,7 @@ export default function App() {
         <Text style={styles.title}>Lobi</Text>
         {winMessage ? <Text style={styles.winText}>{winMessage}</Text> : null}
         <Text style={styles.subtitle}>Oda Kodu: <Text style={{ color: '#38BDF8' }}>{roomData.id}</Text></Text>
+        <Text style={{ color: '#94A3B8', fontSize: 14, marginBottom: 15 }}>Mod: <Text style={{ color: '#F59E0B', fontWeight: 'bold' }}>{roomData.gameModeName || roomData.gameMode || 'Labirent'}</Text></Text>
 
         <View style={styles.playerList}>
           {roomData.players.map(p => (
@@ -561,6 +626,7 @@ export default function App() {
         roomData={roomData}
         players={playersState}
         myId={myId}
+        zoneStates={zoneStates}
       />
 
       {/* GAME UI: Exit Game (Top Left) */}
@@ -602,6 +668,7 @@ export default function App() {
         roomData={roomData}
         players={playersState}
         myId={myId}
+        zoneStates={zoneStates}
       />
     </View>
   );
