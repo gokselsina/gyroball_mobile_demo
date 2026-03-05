@@ -210,7 +210,7 @@ const StaticMap = React.memo(({ gameData, zoneStates }) => {
                 fontWeight: 'bold',
                 textAlign: 'center',
               }}>{zoneName}</Text>
-              
+
               {ownerNick ? (
                 <Text style={{
                   color: ownerColor || '#F59E0B',
@@ -272,9 +272,9 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myI
       )) : null}
 
       {projectiles ? projectiles.map(p => {
-        const radius = p.radius || 45; 
+        const radius = p.radius || 45;
         const angleDeg = (p.facingAngle || 0) * (180 / Math.PI);
-        const rotation = angleDeg + 45; 
+        const rotation = angleDeg + 45;
 
         return (
           <View key={p.id} style={{
@@ -297,7 +297,7 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myI
               borderRightWidth: 4,
               borderColor: p.ownerColor || '#FFF',
               borderTopRightRadius: radius,
-              backgroundColor: (p.ownerColor || '#FFF') + '40', 
+              backgroundColor: (p.ownerColor || '#FFF') + '40',
             }} />
           </View>
         );
@@ -332,7 +332,7 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myI
               borderWidth: isMe ? 3 : 2,
               borderColor: isFrozen ? '#60A5FA' : (isMe ? '#FFF' : 'rgba(255,255,255,0.5)'),
             }} />
-            
+
             {isFrozen ? (
               <View style={{
                 position: 'absolute',
@@ -342,7 +342,7 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myI
                 backgroundColor: 'rgba(96, 165, 250, 0.25)',
               }} />
             ) : null}
-            
+
             {isMe ? (
               <View style={{
                 position: 'absolute',
@@ -506,8 +506,8 @@ export default function App() {
   const [winMessage, setWinMessage] = useState('');
   const [availableRooms, setAvailableRooms] = useState([]);
   const [zoneStates, setZoneStates] = useState(null);
-  const [activeAim, setActiveAim] = useState(null); 
-  const [serverActiveAims, setServerActiveAims] = useState({}); 
+  const [activeAim, setActiveAim] = useState(null);
+  const [serverActiveAims, setServerActiveAims] = useState({});
 
   const offlineGameRef = useRef(null);
   const offlineLoopRef = useRef(null);
@@ -663,7 +663,7 @@ export default function App() {
         setProjectiles(result.projectiles ? [...result.projectiles] : []);
         setCageWalls(result.cageWalls ? [...result.cageWalls] : []);
         setServerActiveAims(result.activeAims || {});
-        
+
         const hp = game.humanPlayer;
         if (hp) setUltiCooldown(hp.ultiCooldown || 0);
 
@@ -717,7 +717,7 @@ export default function App() {
       king_zones: game.mapData.kingZones,
       game_mode: game.gameMode,
       ball_radius: 10,
-      timeLeft: 60,
+      timeLeft: 180,
     });
 
     setRoomData({
@@ -982,10 +982,10 @@ export default function App() {
 
             return (
               <>
-                <AimableUltiButton ultiKey="freeze" top={0} left={50} defaultDx={0} defaultDy={-1} {...props} />     
-                <AimableUltiButton ultiKey="cage" top={100} left={50} defaultDx={0} defaultDy={1} {...props} />      
-                <AimableUltiButton ultiKey="shockwave" top={50} left={0} defaultDx={-1} defaultDy={0} {...props} />  
-                <AimableUltiButton ultiKey="speedburst" top={50} left={100} defaultDx={1} defaultDy={0} {...props} /> 
+                <AimableUltiButton ultiKey="freeze" top={0} left={50} defaultDx={0} defaultDy={-1} {...props} />
+                <AimableUltiButton ultiKey="cage" top={100} left={50} defaultDx={0} defaultDy={1} {...props} />
+                <AimableUltiButton ultiKey="shockwave" top={50} left={0} defaultDx={-1} defaultDy={0} {...props} />
+                <AimableUltiButton ultiKey="speedburst" top={50} left={100} defaultDx={1} defaultDy={0} {...props} />
               </>
             );
           })()}

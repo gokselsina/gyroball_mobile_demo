@@ -241,8 +241,6 @@ function updatePhysics(players, walls, gameMode) {
         p.vy -= p.tilt.y * sensitivity;
         p.vx *= friction;
         p.vy *= friction;
-        p.x += p.vx;
-        p.y += p.vy;
     }
 
     // Player-vs-Player collisions
@@ -267,22 +265,28 @@ function updatePhysics(players, walls, gameMode) {
     }
 
     // Wall collisions
-    for (const p of players) {
-        for (const wall of walls) {
-            const cx = clamp(p.x, wall.x, wall.x + wall.width);
-            const cy = clamp(p.y, wall.y, wall.y + wall.height);
-            const dx = p.x - cx, dy = p.y - cy;
-            const distSq = dx * dx + dy * dy;
-            if (distSq < BALL_RADIUS * BALL_RADIUS) {
-                const dist = Math.sqrt(distSq);
-                if (dist === 0) continue;
-                const overlap = BALL_RADIUS - dist;
-                const nx = dx / dist, ny = dy / dist;
-                p.x += nx * overlap;
-                p.y += ny * overlap;
-                const dot = p.vx * nx + p.vy * ny;
-                p.vx = (p.vx - 1.5 * dot * nx) * 0.9;
-                p.vy = (p.vy - 1.5 * dot * ny) * 0.9;
+    const SUBSTEPS = 4;
+    for (let s = 0; s < SUBSTEPS; s++) {
+        for (const p of players) {
+            p.x += p.vx / SUBSTEPS;
+            p.y += p.vy / SUBSTEPS;
+
+            for (const wall of walls) {
+                const cx = clamp(p.x, wall.x, wall.x + wall.width);
+                const cy = clamp(p.y, wall.y, wall.y + wall.height);
+                const dx = p.x - cx, dy = p.y - cy;
+                const distSq = dx * dx + dy * dy;
+                if (distSq < BALL_RADIUS * BALL_RADIUS) {
+                    const dist = Math.sqrt(distSq);
+                    if (dist === 0) continue;
+                    const overlap = BALL_RADIUS - dist;
+                    const nx = dx / dist, ny = dy / dist;
+                    p.x += nx * overlap;
+                    p.y += ny * overlap;
+                    const dot = p.vx * nx + p.vy * ny;
+                    p.vx = (p.vx - 1.5 * dot * nx) * 0.9;
+                    p.vy = (p.vy - 1.5 * dot * ny) * 0.9;
+                }
             }
         }
     }
@@ -834,7 +838,7 @@ function createOfflineGame(gameMode, playerNick) {
         humanPlayer,
         bots,
         zoneStates,
-        ticksLeft: 60 * 40, // 60 seconds
+        ticksLeft: 180 * 40, // 180 seconds
         tickCount: 0,
         projectiles: [],   // active ulti projectiles
         cageWalls: [],     // temporary cage walls [{x,y,w,h,ticksLeft,id}]
