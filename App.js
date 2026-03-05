@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, Dimensions, Animated, TextInput, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { StyleSheet, Text, View, Dimensions, Animated, TextInput, TouchableOpacity, PanResponder } from 'react-native';
 import { Accelerometer } from 'expo-sensors';
 import Constants from 'expo-constants';
+import { createOfflineGame, tickOfflineGame, fireUlti, ULTI_TYPES, ULTI_COOLDOWN } from './GameEngine';
 
 const { width, height } = Dimensions.get('window');
 
@@ -9,18 +10,18 @@ const EVT = {
   SYNC: 1, TILT: 2,
   MY_ID: 10, ERROR_MSG: 11, JOINED: 12, ROOM_UPDATE: 13,
   LEFT_ROOM: 14, GAME_STARTED: 15, GAME_OVER: 16, ROOM_LIST: 17,
-  ZONE_UPDATE: 18,
+  ZONE_UPDATE: 18, ULTI_UPDATE: 19,
   CREATE_ROOM: 20, JOIN_ROOM: 21, READY: 22, START_GAME: 23,
-  GET_ROOMS: 24, LEAVE_ROOM: 25,
+  GET_ROOMS: 24, LEAVE_ROOM: 25, FIRE_ULTI: 26,
 };
 const EVT_NAME_TO_ID = {
   tilt: 2, create_room: 20, join_room: 21, ready: 22,
-  start_game: 23, get_rooms: 24, leave_room: 25,
+  start_game: 23, get_rooms: 24, leave_room: 25, fire_ulti: 26,
 };
 const EVT_ID_TO_NAME = {
   1: 'sync', 10: 'my_id', 11: 'error_msg', 12: 'joined',
   13: 'room_update', 14: 'left_room', 15: 'game_started',
-  16: 'game_over', 17: 'room_list', 18: 'zone_update',
+  16: 'game_over', 17: 'room_list', 18: 'zone_update', 19: 'ulti_update',
 };
 
 const _tiltBuf = new ArrayBuffer(9);
@@ -127,10 +128,11 @@ const MiniMap = React.memo(({ gameData, roomData, players, myId, zoneStates }) =
       }}>
         <StaticMiniMap gameData={gameData} scale={scale} zoneStates={zoneStates} />
 
-        {roomData && roomData.players.map(p => {
+        {roomData ? roomData.players.map(p => {
           const state = players[p.id];
           if (!state) return null;
           const isMe = p.id === myId;
+          const isFrozen = state.frozenTicks > 0;
           const dotSize = isMe ? 6 : 4;
           return (
             <View key={p.id} style={{
@@ -144,9 +146,20 @@ const MiniMap = React.memo(({ gameData, roomData, players, myId, zoneStates }) =
               borderWidth: isMe ? 1 : 0,
               borderColor: '#FFF',
               zIndex: isMe ? 10 : 1,
-            }} />
+            }}>
+              {isFrozen ? (
+                <View style={{
+                  position: 'absolute',
+                  width: dotSize + 8, height: dotSize + 8,
+                  borderRadius: dotSize / 2 + 4,
+                  borderWidth: 1, borderColor: '#60A5FA',
+                  backgroundColor: 'rgba(96, 165, 250, 0.3)',
+                  left: -4, top: -4,
+                }} />
+              ) : null}
+            </View>
           );
-        })}
+        }) : null}
       </View>
     </View>
   );
@@ -197,7 +210,8 @@ const StaticMap = React.memo(({ gameData, zoneStates }) => {
                 fontWeight: 'bold',
                 textAlign: 'center',
               }}>{zoneName}</Text>
-              {ownerNick && (
+              
+              {ownerNick ? (
                 <Text style={{
                   color: ownerColor || '#F59E0B',
                   fontSize: 8,
@@ -205,7 +219,7 @@ const StaticMap = React.memo(({ gameData, zoneStates }) => {
                   textAlign: 'center',
                   marginTop: 1,
                 }}>👑 {ownerNick}</Text>
-              )}
+              ) : null}
             </View>
           );
         })}
@@ -226,9 +240,7 @@ const StaticMap = React.memo(({ gameData, zoneStates }) => {
   );
 });
 
-// Haritayı ayrı bir bileşen olarak çıkarıyoruz — iOS'de inline style güncellemelerinin
-//  "stale" kalma sorununu ortadan kaldırmak için props-driven render zorluyoruz.
-const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myId, zoneStates }) => {
+const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myId, zoneStates, projectiles, cageWalls, activeAim, serverActiveAims }) => {
   const mapW = gameData ? gameData.map_width : width;
   const mapH = gameData ? gameData.map_height : height;
 
@@ -248,12 +260,56 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myI
     >
       <StaticMap gameData={gameData} zoneStates={zoneStates} />
 
-      {roomData && roomData.players.map(p => {
+      {cageWalls ? cageWalls.map(c => (
+        <View key={c.id} style={{
+          position: 'absolute',
+          left: c.x, top: c.y,
+          width: c.w, height: c.h,
+          backgroundColor: '#8B5CF6',
+          borderRadius: 2,
+          opacity: Math.min(1, c.ticksLeft / 40),
+        }} />
+      )) : null}
+
+      {projectiles ? projectiles.map(p => {
+        const radius = p.radius || 45; 
+        const angleDeg = (p.facingAngle || 0) * (180 / Math.PI);
+        const rotation = angleDeg + 45; 
+
+        return (
+          <View key={p.id} style={{
+            position: 'absolute',
+            left: p.x - radius,
+            top: p.y - radius,
+            width: radius * 2,
+            height: radius * 2,
+            alignItems: 'center',
+            justifyContent: 'center',
+            transform: [{ rotate: `${rotation}deg` }]
+          }}>
+            <View style={{
+              position: 'absolute',
+              right: 0,
+              top: 0,
+              width: radius,
+              height: radius,
+              borderTopWidth: 4,
+              borderRightWidth: 4,
+              borderColor: p.ownerColor || '#FFF',
+              borderTopRightRadius: radius,
+              backgroundColor: (p.ownerColor || '#FFF') + '40', 
+            }} />
+          </View>
+        );
+      }) : null}
+
+      {roomData ? roomData.players.map(p => {
         const state = players[p.id];
         if (!state) return null;
 
         const r = gameData?.ball_radius || 10;
         const isMe = p.id === myId;
+        const isFrozen = state.frozenTicks > 0;
 
         return (
           <View key={p.id} style={{
@@ -262,16 +318,32 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myI
             top: state.y - r,
             width: r * 2,
             height: r * 2,
-            borderRadius: r,
-            backgroundColor: p.color,
-            borderWidth: isMe ? 3 : 2,
-            borderColor: isMe ? '#FFF' : 'rgba(255,255,255,0.5)',
             alignItems: 'center',
             justifyContent: 'center',
             overflow: 'visible',
             zIndex: isMe ? 10 : 1,
           }}>
-            {isMe && (
+            <View style={{
+              position: 'absolute',
+              width: '100%',
+              height: '100%',
+              borderRadius: r,
+              backgroundColor: p.color,
+              borderWidth: isMe ? 3 : 2,
+              borderColor: isFrozen ? '#60A5FA' : (isMe ? '#FFF' : 'rgba(255,255,255,0.5)'),
+            }} />
+            
+            {isFrozen ? (
+              <View style={{
+                position: 'absolute',
+                width: r * 2 + 10, height: r * 2 + 10,
+                borderRadius: r + 5,
+                borderWidth: 2, borderColor: '#60A5FA',
+                backgroundColor: 'rgba(96, 165, 250, 0.25)',
+              }} />
+            ) : null}
+            
+            {isMe ? (
               <View style={{
                 position: 'absolute',
                 width: r * 2 + 14,
@@ -281,7 +353,8 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myI
                 borderColor: p.color,
                 opacity: 0.6,
               }} />
-            )}
+            ) : null}
+
             <View style={{
               position: 'absolute',
               top: -25,
@@ -297,27 +370,131 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myI
                 fontSize: isMe ? 14 : 12,
                 fontWeight: 'bold',
               }}>
-                {isMe ? '▼ ' : ''}{p.nick}
+                {isMe ? '▼ ' : ''}{p.isBot ? '🤖 ' : ''}{p.nick}
               </Text>
             </View>
+
+            {(() => {
+              const currentAim = isMe ? activeAim : (serverActiveAims && serverActiveAims[p.id]);
+              if (!currentAim || currentAim.dx === undefined || currentAim.dy === undefined) return null;
+
+              const ulti = ULTI_TYPES[currentAim.type];
+              if (!ulti) return null;
+
+              const aimRadius = 45;
+              const angleDeg = Math.atan2(currentAim.dy, currentAim.dx) * (180 / Math.PI);
+              const rotation = angleDeg + 45;
+
+              return (
+                <View style={{
+                  position: 'absolute',
+                  width: aimRadius * 2,
+                  height: aimRadius * 2,
+                  left: r - aimRadius,
+                  top: r - aimRadius,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transform: [{ rotate: `${rotation}deg` }],
+                }}>
+                  <View style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: 0,
+                    width: aimRadius,
+                    height: aimRadius,
+                    borderTopWidth: 4,
+                    borderRightWidth: 4,
+                    borderColor: ulti.color || '#FFF',
+                    borderTopRightRadius: aimRadius,
+                    backgroundColor: (ulti.color || '#FFF') + '40',
+                  }} />
+                </View>
+              );
+            })()}
           </View>
         );
-      })}
+      }) : null}
     </View>
   );
 });
 
-// Automatically get the computer's local IP where Expo is running
 const hostUri = Constants.experienceUrl || Constants.expoConfig?.hostUri || '';
 const localIpMatch = hostUri.match(/:\/\/(.*?):/);
 let IP_ADDRESS = localIpMatch ? localIpMatch[1] : '192.168.1.100';
-
-// Using native WebSocket
 const SOCKET_URL = `ws://${IP_ADDRESS}:4000`;
+
+const AimableUltiButton = ({ ultiKey, top, left, defaultDx, defaultDy, isOffline, offlineGameRef, emit, cooldowns, myId, onAimChange }) => {
+  const ulti = ULTI_TYPES[ultiKey];
+  if (!ulti) return null;
+
+  const ultiCooldown = cooldowns[myId] || 0;
+  const onCooldown = ultiCooldown > 0;
+  const cdSeconds = Math.ceil(ultiCooldown / 40);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        if (onCooldown) return;
+        onAimChange({ type: ultiKey, dx: defaultDx, dy: defaultDy });
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        if (onCooldown) return;
+        const { dx, dy } = gestureState;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+          onAimChange({ type: ultiKey, dx, dy });
+        }
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        if (onCooldown) return;
+        const { dx, dy } = gestureState;
+        let fireDx = defaultDx, fireDy = defaultDy;
+
+        if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+          fireDx = dx; fireDy = dy;
+        }
+
+        onAimChange(null);
+        if (isOffline) {
+          if (offlineGameRef.current) fireUlti(offlineGameRef.current, 1, ultiKey, fireDx, fireDy);
+        } else {
+          emit('fire_ulti', { type: ultiKey, dx: fireDx, dy: fireDy });
+        }
+      },
+      onPanResponderTerminate: () => {
+        onAimChange(null);
+      }
+    })
+  ).current;
+
+  return (
+    <View style={{ position: 'absolute', top, left, width: 60, height: 60, zIndex: 100 }}>
+      <View
+        {...panResponder.panHandlers}
+        style={{
+          width: 60, height: 60, borderRadius: 30,
+          backgroundColor: onCooldown ? '#334155' : 'rgba(15, 23, 42, 0.8)',
+          borderWidth: 2,
+          borderColor: onCooldown ? '#475569' : ulti.color,
+          alignItems: 'center', justifyContent: 'center',
+          opacity: onCooldown ? 0.6 : 1,
+        }}
+      >
+        <Text style={{ fontSize: 26 }}>{String(ulti.icon)}</Text>
+        {onCooldown ? (
+          <Text style={{ color: '#F1F5F9', fontSize: 12, fontWeight: '900', marginTop: 2 }}>{String(cdSeconds) + 's'}</Text>
+        ) : (
+          <Text style={{ color: ulti.color, fontSize: 10, fontWeight: '800', marginTop: 2 }}>{String(ulti.name)}</Text>
+        )}
+      </View>
+    </View>
+  );
+};
 
 export default function App() {
   const [socket, setSocket] = useState(null);
   const [myId, setMyId] = useState(null);
+  const myIdRef = useRef(null);
   const [screen, setScreen] = useState('HOME');
   const [nick, setNick] = useState('');
   const [roomCodeInput, setRoomCodeInput] = useState('');
@@ -327,11 +504,18 @@ export default function App() {
   const [gameData, setGameData] = useState(null);
   const [playersState, setPlayersState] = useState({});
   const [winMessage, setWinMessage] = useState('');
-  const [damageIndicators, setDamageIndicators] = useState([]);
   const [availableRooms, setAvailableRooms] = useState([]);
   const [zoneStates, setZoneStates] = useState(null);
+  const [activeAim, setActiveAim] = useState(null); 
+  const [serverActiveAims, setServerActiveAims] = useState({}); 
 
-  // Gyroscope Calibration & Sync Settings
+  const offlineGameRef = useRef(null);
+  const offlineLoopRef = useRef(null);
+  const [isOffline, setIsOffline] = useState(false);
+  const [projectiles, setProjectiles] = useState([]);
+  const [cageWalls, setCageWalls] = useState([]);
+  const [ultiCooldown, setUltiCooldown] = useState(0);
+
   const [invertAxis, setInvertAxis] = useState(false);
   const [calibOffset, setCalibOffset] = useState({ x: 0, y: 0 });
 
@@ -348,7 +532,10 @@ export default function App() {
       try {
         const { event, data } = unpackMessage(msgEvent.data);
 
-        if (event === 'my_id') setMyId(data);
+        if (event === 'my_id') {
+          setMyId(data);
+          myIdRef.current = data;
+        }
         else if (event === 'error_msg') alert(data);
         else if (event === 'joined') {
           setScreen('LOBBY');
@@ -371,7 +558,6 @@ export default function App() {
         }
         else if (event === 'sync') {
           setPlayersState(data.players || {});
-
           if (data.timeLeft !== undefined) {
             setGameData(prev => prev ? { ...prev, timeLeft: data.timeLeft } : null);
           }
@@ -385,6 +571,19 @@ export default function App() {
         }
         else if (event === 'zone_update') {
           setZoneStates(data);
+        }
+        else if (event === 'ulti_update') {
+          setProjectiles(data.projectiles || []);
+          setCageWalls(data.cageWalls || []);
+          const currentMyId = myIdRef.current;
+          if (data.cooldowns && currentMyId !== null && data.cooldowns[currentMyId] !== undefined) {
+            setUltiCooldown(data.cooldowns[currentMyId]);
+          }
+          if (data.activeAims) {
+            setServerActiveAims(data.activeAims);
+          } else {
+            setServerActiveAims({});
+          }
         }
       } catch (e) { }
     };
@@ -401,6 +600,12 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    if (!isOffline && socket && activeAim) {
+      emit('aim_ulti', activeAim);
+    }
+  }, [activeAim]);
+
   const calibrateSensor = async () => {
     try {
       if (Accelerometer.requestPermissionsAsync) {
@@ -416,7 +621,6 @@ export default function App() {
     }
   };
 
-  // Live gyro monitor state for visuals
   const [liveGyro, setLiveGyro] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
@@ -433,14 +637,54 @@ export default function App() {
 
         if (screen === 'GAME') {
           tiltRef.current = { x: ax, y: ay };
-          emit('tilt', { x: ax, y: ay });
+          if (isOffline && offlineGameRef.current) {
+            offlineGameRef.current.humanPlayer.tilt = { x: ax, y: ay };
+          } else {
+            emit('tilt', { x: ax, y: ay });
+          }
         } else if (screen === 'HOME') {
           setLiveGyro({ x: ax, y: ay });
         }
       });
       return () => subscription.remove();
     }
-  }, [screen, socket, calibOffset, invertAxis]);
+  }, [screen, socket, calibOffset, invertAxis, isOffline]);
+
+  useEffect(() => {
+    if (screen === 'GAME' && isOffline && offlineGameRef.current) {
+      offlineLoopRef.current = setInterval(() => {
+        const game = offlineGameRef.current;
+        if (!game) return;
+        const result = tickOfflineGame(game);
+
+        setPlayersState(result.playersState);
+        setGameData(prev => prev ? { ...prev, timeLeft: result.timeLeft } : null);
+        setZoneStates([...game.zoneStates]);
+        setProjectiles(result.projectiles ? [...result.projectiles] : []);
+        setCageWalls(result.cageWalls ? [...result.cageWalls] : []);
+        setServerActiveAims(result.activeAims || {});
+        
+        const hp = game.humanPlayer;
+        if (hp) setUltiCooldown(hp.ultiCooldown || 0);
+
+        if (result.isOver) {
+          clearInterval(offlineLoopRef.current);
+          offlineLoopRef.current = null;
+          offlineGameRef.current = null;
+          setIsOffline(false);
+          setScreen('HOME');
+          setWinMessage(`Oyun Bitti! Kazanan: ${result.winner}`);
+        }
+      }, 1000 / 40);
+
+      return () => {
+        if (offlineLoopRef.current) {
+          clearInterval(offlineLoopRef.current);
+          offlineLoopRef.current = null;
+        }
+      };
+    }
+  }, [screen, isOffline]);
 
   useEffect(() => {
     if (screen === 'HOME') {
@@ -461,6 +705,53 @@ export default function App() {
     emit('join_room', { roomCode: roomCodeInput, nick });
   };
 
+  const handleOfflineStart = () => {
+    const playerName = nick || 'Sen';
+    const game = createOfflineGame(gameMode, playerName);
+    offlineGameRef.current = game;
+
+    setGameData({
+      map_width: game.mapData.width,
+      map_height: game.mapData.height,
+      walls: game.mapData.walls,
+      king_zones: game.mapData.kingZones,
+      game_mode: game.gameMode,
+      ball_radius: 10,
+      timeLeft: 60,
+    });
+
+    setRoomData({
+      id: 'OFFLINE',
+      hostId: 1,
+      state: 'IN_GAME',
+      gameMode: game.gameMode,
+      players: game.allPlayers.map(p => ({
+        id: p.id, nick: p.nick, color: p.color,
+        ready: true, score: 0, isHost: p.id === 1,
+        isBot: p.isBot,
+      })),
+    });
+
+    setMyId(1);
+    setZoneStates(null);
+    setPlayersState({});
+    setWinMessage('');
+    setIsOffline(true);
+    setScreen('GAME');
+  };
+
+  const handleExitGame = () => {
+    if (isOffline) {
+      if (offlineLoopRef.current) clearInterval(offlineLoopRef.current);
+      offlineLoopRef.current = null;
+      offlineGameRef.current = null;
+      setIsOffline(false);
+      setScreen('HOME');
+    } else {
+      emit('leave_room');
+    }
+  };
+
   const toggleReady = () => emit('ready');
   const startGame = () => emit('start_game');
 
@@ -468,7 +759,6 @@ export default function App() {
     return (
       <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
         <Text style={styles.title}>Gyro Maze Multi</Text>
-        {/* Game Mode Selector */}
         <View style={{ flexDirection: 'row', width: '80%', marginBottom: 20, backgroundColor: '#1E293B', borderRadius: 12, padding: 4, borderWidth: 1, borderColor: '#334155' }}>
           <TouchableOpacity
             style={{
@@ -502,6 +792,15 @@ export default function App() {
           <Text style={styles.buttonText}>Yeni Oda Kur</Text>
         </TouchableOpacity>
 
+        <TouchableOpacity
+          style={[styles.button, { backgroundColor: '#10B981', marginTop: 12 }]}
+          onPress={handleOfflineStart}
+        >
+          <Text style={styles.buttonText}>🤖 Offline Oyna (Botlarla)</Text>
+        </TouchableOpacity>
+
+        {winMessage ? <Text style={[styles.winText, { marginTop: 15 }]}>{winMessage}</Text> : null}
+
         <View style={styles.divider} />
 
         <TextInput
@@ -516,7 +815,7 @@ export default function App() {
           <Text style={styles.buttonText}>Odaya Katıl</Text>
         </TouchableOpacity>
 
-        {availableRooms.length > 0 && (
+        {availableRooms.length > 0 ? (
           <View style={styles.openRoomsContainer}>
             <Text style={{ color: '#94A3B8', marginBottom: 10 }}>Açık Odalar:</Text>
             {availableRooms.map(r => (
@@ -529,9 +828,8 @@ export default function App() {
               </TouchableOpacity>
             ))}
           </View>
-        )}
+        ) : null}
 
-        {/* Sensör / Kalibrasyon Ayarları */}
         <View style={{ width: '80%', marginTop: 30 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 }}>
             <TouchableOpacity
@@ -546,15 +844,12 @@ export default function App() {
             </TouchableOpacity>
           </View>
 
-          {/* Visual Gyro Indicator */}
           <View style={{ alignItems: 'center', backgroundColor: '#1E293B', padding: 15, borderRadius: 12, borderWidth: 1, borderColor: '#334155' }}>
             <Text style={{ color: '#94A3B8', fontSize: 13, marginBottom: 15 }}>İvme Sensörü Testi</Text>
             <View style={{ width: 100, height: 100, borderRadius: 50, backgroundColor: '#0F172A', borderWidth: 2, borderColor: '#38BDF8', overflow: 'hidden', justifyContent: 'center', alignItems: 'center' }}>
-              {/* Crosshair */}
               <View style={{ position: 'absolute', width: 2, height: '100%', backgroundColor: 'rgba(56, 189, 248, 0.3)' }} />
               <View style={{ position: 'absolute', height: 2, width: '100%', backgroundColor: 'rgba(56, 189, 248, 0.3)' }} />
 
-              {/* Bubble */}
               <View style={{
                 width: 20, height: 20, borderRadius: 10, backgroundColor: '#10B981',
                 transform: [
@@ -585,7 +880,7 @@ export default function App() {
             <View key={p.id} style={styles.playerItem}>
               <View style={[styles.playerColor, { backgroundColor: p.color }]} />
               <Text style={styles.playerName}>{p.nick}</Text>
-              {p.isHost && <Text style={{ color: '#F59E0B', marginLeft: 10 }}>(Kurucu)</Text>}
+              {p.isHost ? <Text style={{ color: '#F59E0B', marginLeft: 10 }}>(Kurucu)</Text> : null}
               <Text style={{ color: p.ready ? '#10B981' : '#F43F5E', marginLeft: 'auto' }}>{p.ready ? 'HAZIR' : 'BEKLİYOR'}</Text>
             </View>
           ))}
@@ -598,11 +893,11 @@ export default function App() {
           <Text style={styles.buttonText}>{me?.ready ? 'Hazırsın (İptal)' : 'Hazır Ol'}</Text>
         </TouchableOpacity>
 
-        {isHost && (
+        {isHost ? (
           <TouchableOpacity style={[styles.buttonSecondary, { marginTop: 20 }]} onPress={startGame}>
             <Text style={styles.buttonText}>Oyunu Başlat</Text>
           </TouchableOpacity>
-        )}
+        ) : null}
 
         <TouchableOpacity style={{ marginTop: 30 }} onPress={() => emit('leave_room')}>
           <Text style={{ color: '#F43F5E', fontSize: 16, fontWeight: 'bold' }}>Odadan Ayrıl</Text>
@@ -618,7 +913,6 @@ export default function App() {
 
   return (
     <View style={styles.container}>
-      {/* MAP — Ayrı bir MapView bileşenine alındı, iOS da plaınta render düzgelşti */}
       <MapView
         offsetX={offsetX}
         offsetY={offsetY}
@@ -627,25 +921,26 @@ export default function App() {
         players={playersState}
         myId={myId}
         zoneStates={zoneStates}
+        projectiles={projectiles}
+        cageWalls={cageWalls}
+        activeAim={activeAim}
+        serverActiveAims={serverActiveAims}
       />
 
-      {/* GAME UI: Exit Game (Top Left) */}
       <TouchableOpacity
         style={styles.exitButton}
-        onPress={() => emit('leave_room')}>
+        onPress={handleExitGame}>
         <Text style={{ color: '#FFF', fontWeight: 'bold' }}>X Çıkış</Text>
       </TouchableOpacity>
 
-      {/* GAME UI: Kalan Süre (Top Center) */}
-      {gameData && gameData.timeLeft !== undefined && (
+      {(gameData && gameData.timeLeft !== undefined) ? (
         <View style={styles.topHUD}>
           <Text style={styles.timerText}>{gameData.timeLeft}</Text>
         </View>
-      )}
+      ) : null}
 
-      {/* GAME UI: Skorlar (Top Right) */}
       <View style={styles.scoreHUD}>
-        {roomData && roomData.players.map(p => {
+        {roomData ? roomData.players.map(p => {
           const state = playersState[p.id] || { score: 0 };
           const widthPercent = Math.min(100, Math.max(0, (state.score / 6000) * 100));
           return (
@@ -659,10 +954,9 @@ export default function App() {
               </View>
             </View>
           )
-        })}
+        }) : null}
       </View>
 
-      {/* GAME UI: MiniMap (Bottom Left) */}
       <MiniMap
         gameData={gameData}
         roomData={roomData}
@@ -670,6 +964,33 @@ export default function App() {
         myId={myId}
         zoneStates={zoneStates}
       />
+
+      {gameData?.game_mode === 'arena' ? (
+        <View style={{
+          position: 'absolute', bottom: 60, right: 30,
+          width: 160, height: 160,
+        }}>
+          {(() => {
+            const props = {
+              isOffline,
+              offlineGameRef,
+              emit,
+              cooldowns: { [myId]: ultiCooldown },
+              myId,
+              onAimChange: setActiveAim
+            };
+
+            return (
+              <>
+                <AimableUltiButton ultiKey="freeze" top={0} left={50} defaultDx={0} defaultDy={-1} {...props} />     
+                <AimableUltiButton ultiKey="cage" top={100} left={50} defaultDx={0} defaultDy={1} {...props} />      
+                <AimableUltiButton ultiKey="shockwave" top={50} left={0} defaultDx={-1} defaultDy={0} {...props} />  
+                <AimableUltiButton ultiKey="speedburst" top={50} left={100} defaultDx={1} defaultDy={0} {...props} /> 
+              </>
+            );
+          })()}
+        </View>
+      ) : null}
     </View>
   );
 }
