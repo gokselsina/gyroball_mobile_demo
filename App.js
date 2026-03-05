@@ -70,7 +70,39 @@ function unpackMessage(arrayBuffer) {
   return { event, data };
 }
 
-const MINIMAP_SIZE = 90;
+const MINIMAP_SIZE = 160;
+
+const StaticMiniMap = React.memo(({ gameData, scale }) => {
+  if (!gameData) return null;
+  return (
+    <>
+      {gameData.king_zone && (
+        <View style={{
+          position: 'absolute',
+          left: (gameData.king_zone.x - gameData.king_zone.radius) * scale,
+          top: (gameData.king_zone.y - gameData.king_zone.radius) * scale,
+          width: gameData.king_zone.radius * 2 * scale,
+          height: gameData.king_zone.radius * 2 * scale,
+          borderRadius: gameData.king_zone.radius * scale,
+          backgroundColor: 'rgba(245, 158, 11, 0.25)',
+          borderWidth: 1,
+          borderColor: '#F59E0B',
+        }} />
+      )}
+
+      {gameData.walls.map(w => (
+        <View key={w.id} style={{
+          position: 'absolute',
+          left: w.x * scale,
+          top: w.y * scale,
+          width: Math.max(1, w.width * scale),
+          height: Math.max(1, w.height * scale),
+          backgroundColor: 'rgba(56, 189, 248, 0.6)',
+        }} />
+      ))}
+    </>
+  );
+});
 
 const MiniMap = React.memo(({ gameData, roomData, players, myId }) => {
   if (!gameData) return null;
@@ -87,30 +119,7 @@ const MiniMap = React.memo(({ gameData, roomData, players, myId }) => {
         borderColor: '#475569',
         overflow: 'hidden',
       }}>
-        {gameData.king_zone && (
-          <View style={{
-            position: 'absolute',
-            left: (gameData.king_zone.x - gameData.king_zone.radius) * scale,
-            top: (gameData.king_zone.y - gameData.king_zone.radius) * scale,
-            width: gameData.king_zone.radius * 2 * scale,
-            height: gameData.king_zone.radius * 2 * scale,
-            borderRadius: gameData.king_zone.radius * scale,
-            backgroundColor: 'rgba(245, 158, 11, 0.25)',
-            borderWidth: 1,
-            borderColor: '#F59E0B',
-          }} />
-        )}
-
-        {gameData.walls.map(w => (
-          <View key={w.id} style={{
-            position: 'absolute',
-            left: w.x * scale,
-            top: w.y * scale,
-            width: Math.max(1, w.width * scale),
-            height: Math.max(1, w.height * scale),
-            backgroundColor: 'rgba(56, 189, 248, 0.6)',
-          }} />
-        ))}
+        <StaticMiniMap gameData={gameData} scale={scale} />
 
         {roomData && roomData.players.map(p => {
           const state = players[p.id];
@@ -137,6 +146,50 @@ const MiniMap = React.memo(({ gameData, roomData, players, myId }) => {
   );
 });
 
+const StaticMap = React.memo(({ gameData }) => {
+  if (!gameData) return null;
+  return (
+    <>
+      <View style={{
+        position: 'absolute',
+        width: gameData.map_width,
+        height: gameData.map_height,
+        borderWidth: 5,
+        borderColor: '#475569',
+        backgroundColor: '#1E293B',
+        left: 0,
+        top: 0
+      }}>
+        {gameData.king_zone && (
+          <View style={{
+            position: 'absolute',
+            left: gameData.king_zone.x - gameData.king_zone.radius,
+            top: gameData.king_zone.y - gameData.king_zone.radius,
+            width: gameData.king_zone.radius * 2,
+            height: gameData.king_zone.radius * 2,
+            borderRadius: gameData.king_zone.radius,
+            backgroundColor: 'rgba(245, 158, 11, 0.15)',
+            borderWidth: 2,
+            borderColor: '#F59E0B',
+          }} />
+        )}
+      </View>
+
+      {gameData.walls.map(w => (
+        <View key={w.id} style={{
+          position: 'absolute',
+          left: w.x,
+          top: w.y,
+          width: w.width,
+          height: w.height,
+          backgroundColor: '#38BDF8',
+          borderRadius: 5,
+        }} />
+      ))}
+    </>
+  );
+});
+
 // Haritayı ayrı bir bileşen olarak çıkarıyoruz — iOS'de inline style güncellemelerinin
 //  "stale" kalma sorununu ortadan kaldırmak için props-driven render zorluyoruz.
 const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myId }) => {
@@ -157,44 +210,7 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myI
         }
       ]}
     >
-      {gameData && (
-        <View style={{
-          position: 'absolute',
-          width: gameData.map_width,
-          height: gameData.map_height,
-          borderWidth: 5,
-          borderColor: '#475569',
-          backgroundColor: '#1E293B',
-          left: 0,
-          top: 0
-        }}>
-          {gameData.king_zone && (
-            <View style={{
-              position: 'absolute',
-              left: gameData.king_zone.x - gameData.king_zone.radius,
-              top: gameData.king_zone.y - gameData.king_zone.radius,
-              width: gameData.king_zone.radius * 2,
-              height: gameData.king_zone.radius * 2,
-              borderRadius: gameData.king_zone.radius,
-              backgroundColor: 'rgba(245, 158, 11, 0.15)',
-              borderWidth: 2,
-              borderColor: '#F59E0B',
-            }} />
-          )}
-        </View>
-      )}
-
-      {gameData && gameData.walls.map(w => (
-        <View key={w.id} style={{
-          position: 'absolute',
-          left: w.x,
-          top: w.y,
-          width: w.width,
-          height: w.height,
-          backgroundColor: '#38BDF8',
-          borderRadius: 5,
-        }} />
-      ))}
+      <StaticMap gameData={gameData} />
 
       {roomData && roomData.players.map(p => {
         const state = players[p.id];
