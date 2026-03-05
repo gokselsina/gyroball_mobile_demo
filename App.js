@@ -534,9 +534,16 @@ export default function App() {
   const [ultiCooldown, setUltiCooldown] = useState(0);
 
   const [invertAxis, setInvertAxis] = useState(false);
-  const [calibOffset, setCalibOffset] = useState({ x: 0, y: 0 });
+  
+  // Z eksenini de state'e dahil ettik
+  const [calibOffset, setCalibOffset] = useState({ x: 0, y: 0, z: -1 }); 
+  
+  // AÇISAL HASSASİYET ÇARPANI (Daha yüksek = Ufak hareketlere daha duyarlı)
+  const SENSITIVITY = 2.5; 
 
   const tiltRef = useRef({ x: 0, y: 0 });
+
+  const smoothedAccRef = useRef({ x: 0, y: 0, z: -1 });
 
   useEffect(() => {
     const s = new WebSocket(SOCKET_URL);
@@ -634,9 +641,10 @@ export default function App() {
         await Accelerometer.requestPermissionsAsync();
       }
       const subscription = Accelerometer.addListener(data => {
-        setCalibOffset({ x: data.x, y: data.y });
+        // Z ekseni kalibrasyonunu da kaydediyoruz
+        setCalibOffset({ x: data.x, y: data.y, z: data.z });
         subscription.remove();
-        alert('Cihazın duruş açısı kalibre edildi! Balonu ortalamak için ince ayar yapabilirsiniz.');
+        alert('Cihazın duruş açısı kalibre edildi! Artık ileri/geri hareketleri tamamen simetrik.');
       });
     } catch (e) {
       alert('Sensör okunamadı: ' + e.message);
@@ -649,8 +657,51 @@ export default function App() {
     if (screen === 'GAME' || screen === 'HOME') {
       Accelerometer.setUpdateInterval(33);
       const subscription = Accelerometer.addListener(data => {
-        let ax = data.x - calibOffset.x;
-        let ay = data.y - calibOffset.y;
+        
+        // --- 1. LOW-PASS FILTER (TİTREME YOK EDİCİ) ---
+        const ALPHA = 0.15; 
+        
+        let smoothedData = smoothedAccRef.current;
+        smoothedData.x = data.x * ALPHA + smoothedData.x * (1 - ALPHA);
+        smoothedData.y = data.y * ALPHA + smoothedData.y * (1 - ALPHA);
+        smoothedData.z = data.z * ALPHA + smoothedData.z * (1 - ALPHA);
+
+        // --- 2. GERÇEK AÇI HESAPLAMASI ---
+        let currentRoll = Math.atan2(smoothedData.x, Math.sqrt(smoothedData.y * smoothedData.y + smoothedData.z * smoothedData.z));
+        let calibRoll = Math.atan2(calibOffset.x, Math.sqrt(calibOffset.y * calibOffset.y + calibOffset.z * calibOffset.z));
+        let deltaRoll = currentRoll - calibRoll;
+
+        let currentPitch = Math.atan2(smoothedData.y, smoothedData.z);
+        let calibPitch = Math.atan2(calibOffset.y, calibOffset.z);
+        let deltaPitch = currentPitch - calibPitch;
+
+        if (deltaPitch > Math.PI) deltaPitch -= 2 * Math.PI;
+        if (deltaPitch < -Math.PI) deltaPitch += 2 * Math.PI;
+        if (deltaRoll > Math.PI) deltaRoll -= 2 * Math.PI;
+        if (deltaRoll < -Math.PI) deltaRoll += 2 * Math.PI;
+
+        // --- 3. ZAHMETSİZ (EFFORTLESS) KONTROL ALGORİTMASI ---
+        const DEADZONE = 0.02; // Sadece elin nefes alırkenki titremesini yoksayar
+        const MAX_ANGLE = 0.35; // Yaklaşık 20 derece. %100 güce ulaşmak için gereken maksimum fiziksel eğim!
+        const MAX_FORCE = 1.0; // Topun oyun motorundaki maksimum ivmesi
+
+        let rawX = deltaRoll;
+        let rawY = -deltaPitch; 
+
+        // Deadzone uygula
+        if (Math.abs(rawX) < DEADZONE) rawX = 0;
+        else rawX = Math.sign(rawX) * (Math.abs(rawX) - DEADZONE);
+
+        if (Math.abs(rawY) < DEADZONE) rawY = 0;
+        else rawY = Math.sign(rawY) * (Math.abs(rawY) - DEADZONE);
+
+        // Doğrusal (Linear) Orantı
+        let ax = (rawX / MAX_ANGLE) * MAX_FORCE;
+        let ay = (rawY / MAX_ANGLE) * MAX_FORCE;
+
+        // CLAMP (Sınırlandırma): Cihazı MAX_ANGLE'dan fazla eğersen güç artmaz, bileklerin kilitlenip yorulmaz.
+        ax = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, ax));
+        ay = Math.max(-MAX_FORCE, Math.min(MAX_FORCE, ay));
 
         if (invertAxis) {
           ax = -ax;
