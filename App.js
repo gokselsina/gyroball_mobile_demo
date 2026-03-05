@@ -240,7 +240,7 @@ const StaticMap = React.memo(({ gameData, zoneStates }) => {
   );
 });
 
-const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myId, zoneStates, projectiles, cageWalls, activeAim, serverActiveAims }) => {
+const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myId, zoneStates, projectiles, vortexes, cageWalls, activeAim, serverActiveAims }) => {
   const mapW = gameData ? gameData.map_width : width;
   const mapH = gameData ? gameData.map_height : height;
 
@@ -270,6 +270,22 @@ const MapView = React.memo(({ offsetX, offsetY, gameData, roomData, players, myI
           opacity: Math.min(1, c.ticksLeft / 40),
         }} />
       )) : null}
+
+      {vortexes ? vortexes.map(v => {
+        const r = v.r || v.currentRadius || 0;
+        return (
+          <View key={v.id} style={{
+            position: 'absolute',
+            left: v.x - r, top: v.y - r,
+            width: r * 2, height: r * 2,
+            borderRadius: r,
+            backgroundColor: '#6366F1',
+            opacity: 0.3,
+            borderWidth: 2,
+            borderColor: '#4F46E5',
+          }} />
+        );
+      }) : null}
 
       {projectiles ? projectiles.map(p => {
         const radius = p.radius || 45;
@@ -513,6 +529,7 @@ export default function App() {
   const offlineLoopRef = useRef(null);
   const [isOffline, setIsOffline] = useState(false);
   const [projectiles, setProjectiles] = useState([]);
+  const [vortexes, setVortexes] = useState([]);
   const [cageWalls, setCageWalls] = useState([]);
   const [ultiCooldown, setUltiCooldown] = useState(0);
 
@@ -558,6 +575,10 @@ export default function App() {
         }
         else if (event === 'sync') {
           setPlayersState(data.players || {});
+          setProjectiles(data.projectiles || []);
+          setVortexes(data.vortexes || []);
+          setCageWalls(data.cageWalls || []);
+
           if (data.timeLeft !== undefined) {
             setGameData(prev => prev ? { ...prev, timeLeft: data.timeLeft } : null);
           }
@@ -574,6 +595,7 @@ export default function App() {
         }
         else if (event === 'ulti_update') {
           setProjectiles(data.projectiles || []);
+          setVortexes(data.vortexes || []);
           setCageWalls(data.cageWalls || []);
           const currentMyId = myIdRef.current;
           if (data.cooldowns && currentMyId !== null && data.cooldowns[currentMyId] !== undefined) {
@@ -661,6 +683,7 @@ export default function App() {
         setGameData(prev => prev ? { ...prev, timeLeft: result.timeLeft } : null);
         setZoneStates([...game.zoneStates]);
         setProjectiles(result.projectiles ? [...result.projectiles] : []);
+        setVortexes(result.vortexes ? [...result.vortexes] : []);
         setCageWalls(result.cageWalls ? [...result.cageWalls] : []);
         setServerActiveAims(result.activeAims || {});
 
@@ -922,6 +945,7 @@ export default function App() {
         myId={myId}
         zoneStates={zoneStates}
         projectiles={projectiles}
+        vortexes={vortexes}
         cageWalls={cageWalls}
         activeAim={activeAim}
         serverActiveAims={serverActiveAims}
@@ -985,7 +1009,7 @@ export default function App() {
                 <AimableUltiButton ultiKey="freeze" top={0} left={50} defaultDx={0} defaultDy={-1} {...props} />
                 <AimableUltiButton ultiKey="cage" top={100} left={50} defaultDx={0} defaultDy={1} {...props} />
                 <AimableUltiButton ultiKey="shockwave" top={50} left={0} defaultDx={-1} defaultDy={0} {...props} />
-                <AimableUltiButton ultiKey="speedburst" top={50} left={100} defaultDx={1} defaultDy={0} {...props} />
+                <AimableUltiButton ultiKey="vortex" top={50} left={100} defaultDx={1} defaultDy={0} {...props} />
               </>
             );
           })()}

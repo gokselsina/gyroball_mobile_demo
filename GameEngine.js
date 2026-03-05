@@ -27,9 +27,13 @@ const ULTI_TYPES = {
         name: 'Hapsetme', icon: '🔵', color: '#8B5CF6',
         maxDistance: 160, projectile: true,
     },
-    speedburst: {
-        name: 'Hız Patlaması', icon: '🟣', color: '#EC4899',
-        maxDistance: 180, projectile: false, // self-targeted
+    // speedburst: {
+    //     name: 'Hız Patlaması', icon: '🟣', color: '#EC4899',
+    //     maxDistance: 180, projectile: false, // self-targeted
+    // },
+    vortex: {
+        name: 'Kara Delik', icon: '🌀', color: '#6366F1',
+        maxDistance: 250, projectile: true,
     },
 };
 
@@ -232,7 +236,7 @@ function generateArenaMap() {
 
 // ─── PHYSICS ───────────────────────────────────────────
 
-function updatePhysics(players, walls, gameMode) {
+function updatePhysics(players, walls, gameMode, vortexes = []) {
     const friction = gameMode === 'labyrinth' ? 1.0 : 0.98;
 
     for (const p of players) {
@@ -267,9 +271,30 @@ function updatePhysics(players, walls, gameMode) {
     // Wall collisions
     const SUBSTEPS = 4;
     for (let s = 0; s < SUBSTEPS; s++) {
+        // Update vortexes once per tick
+        if (s === 0) {
+            for (const v of vortexes) {
+                if (v.currentRadius < v.maxRadius) v.currentRadius += 2;
+                v.ticksLeft--;
+            }
+        }
+
         for (const p of players) {
             p.x += p.vx / SUBSTEPS;
             p.y += p.vy / SUBSTEPS;
+
+            // Apply Vortex attraction
+            for (const v of vortexes) {
+                if (p.id === v.shooterId) continue;
+                const dx = v.x - p.x;
+                const dy = v.y - p.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < v.currentRadius + 20) {
+                    const force = 0.8 * (1 - dist / (v.currentRadius + 40));
+                    p.vx += (dx / (dist || 1)) * force;
+                    p.vy += (dy / (dist || 1)) * force;
+                }
+            }
 
             for (const wall of walls) {
                 const cx = clamp(p.x, wall.x, wall.x + wall.width);
@@ -285,7 +310,7 @@ function updatePhysics(players, walls, gameMode) {
                     p.y += ny * overlap;
                     const dot = p.vx * nx + p.vy * ny;
                     p.vx = (p.vx - 1.5 * dot * nx) * 0.9;
-                    p.vy = (p.vy - 1.5 * dot * ny) * 0.9;
+                    p.vy = (p.vy - (1.5 * dot * ny)) * 0.9;
                 }
             }
         }
@@ -605,12 +630,7 @@ function fireUlti(game, shooterId, ultiType, dx, dy) {
 
     shooter.ultiCooldown = ULTI_COOLDOWN;
 
-    if (ultiType === 'speedburst') {
-        // Self-dash: instant velocity boost in direction
-        shooter.vx += nx * 12;
-        shooter.vy += ny * 12;
-        return true;
-    }
+
 
     // Create projectile
     game.projectiles.push({
@@ -658,7 +678,23 @@ function updateProjectiles(game) {
                 break;
             }
         }
-        if (hitWall) { toRemove.push(proj.id); continue; }
+
+        if (hitWall || proj.distanceTraveled >= proj.maxDistance) {
+            if (proj.type === 'vortex') {
+                game.vortexes.push({
+                    id: `vortex_${game.nextProjectileId++}`,
+                    shooterId: proj.ownerId,
+                    x: proj.x,
+                    y: proj.y,
+                    currentRadius: 0,
+                    maxRadius: 80,
+                    ticksLeft: 140, // 3.5 seconds
+                    color: '#6366F1'
+                });
+            }
+            toRemove.push(proj.id);
+            continue;
+        }
 
         // Player hit detection
         for (const p of players) {
@@ -678,7 +714,7 @@ function updateProjectiles(game) {
                 normDiff = Math.abs(normDiff);
 
                 if (normDiff <= Math.PI / 4) { // Hit!
-                    applyUltiEffect(game, proj.type, p, proj.vx, proj.vy);
+                    applyUltiEffect(game, proj.type, p, proj.vx, proj.vy, proj.ownerId, proj.x, proj.y);
                     toRemove.push(proj.id);
                     break; // Hit one target (can remove break if we want AoE to pierce, but let's keep it 1 hit for now)
                 }
@@ -689,7 +725,7 @@ function updateProjectiles(game) {
     game.projectiles = game.projectiles.filter(p => !toRemove.includes(p.id));
 }
 
-function applyUltiEffect(game, type, targetPlayer, vx, vy) {
+function applyUltiEffect(game, type, targetPlayer, vx, vy, shooterId, px, py) {
     const dir = Math.sqrt(vx ** 2 + vy ** 2);
     const nx = dir > 0 ? vx / dir : 0;
     const ny = dir > 0 ? vy / dir : 0;
@@ -719,6 +755,17 @@ function applyUltiEffect(game, type, targetPlayer, vx, vy) {
         );
         targetPlayer.vx = 0;
         targetPlayer.vy = 0;
+    } else if (type === 'vortex') {
+        game.vortexes.push({
+            id: `vortex_${game.nextProjectileId++}`,
+            shooterId: shooterId,
+            x: px,
+            y: py,
+            currentRadius: 0,
+            maxRadius: 80,
+            ticksLeft: 140, // 3.5 seconds
+            color: '#6366F1'
+        });
     }
 }
 
@@ -773,7 +820,7 @@ function updateBotUltiAI(game) {
         if (Math.random() > 0.03) continue;
 
         // Pick a random ulti type
-        const types = ['shockwave', 'freeze', 'cage', 'speedburst'];
+        const types = ['shockwave', 'freeze', 'cage', 'vortex'];
         const chosen = types[Math.floor(Math.random() * types.length)];
 
         // Start aiming for 10-20 ticks (0.25 - 0.5s reaction time / warning)
@@ -841,6 +888,7 @@ function createOfflineGame(gameMode, playerNick) {
         ticksLeft: 180 * 40, // 180 seconds
         tickCount: 0,
         projectiles: [],   // active ulti projectiles
+        vortexes: [],      // active vortexes
         cageWalls: [],     // temporary cage walls [{x,y,w,h,ticksLeft,id}]
         nextProjectileId: 1,
     };
@@ -869,10 +917,14 @@ function tickOfflineGame(game) {
 
     // Physics (includes cage walls as temporary obstacles)
     const allWalls = [...game.mapData.walls, ...game.cageWalls.map(c => ({ x: c.x, y: c.y, width: c.w, height: c.h, id: c.id }))];
-    updatePhysics(game.allPlayers, allWalls, game.gameMode);
+    updatePhysics(game.allPlayers, allWalls, game.gameMode, game.vortexes);
 
     // Update projectiles
     updateProjectiles(game);
+
+    // Filter expired effects
+    game.cageWalls = game.cageWalls.filter(c => c.ticksLeft > 0);
+    game.vortexes = game.vortexes.filter(v => v.ticksLeft > 0);
 
     // Update cage wall timers
     for (const cage of game.cageWalls) cage.ticksLeft--;
@@ -902,6 +954,7 @@ function tickOfflineGame(game) {
     return {
         playersState, timeLeft, isOver: game.ticksLeft <= 0, winner,
         projectiles: game.projectiles,
+        vortexes: game.vortexes,
         cageWalls: game.cageWalls,
         activeAims: activeAimsPacked,
     };
